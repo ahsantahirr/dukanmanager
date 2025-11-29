@@ -75,9 +75,7 @@ export default function Auth() {
       <Card className="w-full max-w-md shadow-lg">
         <CardHeader className="text-center">
           <div className="flex justify-center mb-4">
-            <div className="bg-primary rounded-full p-3">
-              <Package className="h-8 w-8 text-primary-foreground" />
-            </div>
+           <img src="/logo.png" className="h-14 w-14" alt="logo"/>
           </div>
           <CardTitle className="text-2xl">Smart Inventory System</CardTitle>
           <CardDescription>
