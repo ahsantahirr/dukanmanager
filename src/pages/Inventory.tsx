@@ -9,8 +9,16 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
-import { Plus, Edit, Trash2, Package, AlertTriangle } from "lucide-react";
+import { Plus, Edit, Trash2, AlertTriangle } from "lucide-react";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { PageHeader } from "@/components/PageHeader";
+import { PageLoader } from "@/components/PageLoader";
+import { EmptyState, EmptyStateButton } from "@/components/EmptyState";
+import { formatRs } from "@/lib/format";
+import { images, getProductImage } from "@/lib/images";
+import { EntityImage } from "@/components/EntityImage";
+import { ImageUploadField } from "@/components/ImageUploadField";
+import { removeLocalImage, saveLocalImage } from "@/lib/localImages";
 
 export default function Inventory() {
   const { user } = useAuth();
@@ -19,6 +27,7 @@ export default function Inventory() {
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<any>(null);
+  const [pendingImage, setPendingImage] = useState<File | null>(null);
 
   useEffect(() => {
     if (user) {
@@ -58,7 +67,7 @@ export default function Inventory() {
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
-    
+
     const itemData = {
       category_id: formData.get("category_id") as string,
       name: formData.get("name") as string,
@@ -82,18 +91,25 @@ export default function Inventory() {
         toast.success("Item updated successfully");
         setDialogOpen(false);
         setEditingItem(null);
+        setPendingImage(null);
         fetchData();
       }
     } else {
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from("inventory_items")
-        .insert(itemData);
+        .insert(itemData)
+        .select()
+        .single();
 
       if (error) {
         toast.error(error.message);
       } else {
+        if (data && pendingImage && user?.id) {
+          await saveLocalImage(user.id, "inventory", data.id, pendingImage);
+        }
         toast.success("Item added successfully");
         setDialogOpen(false);
+        setPendingImage(null);
         fetchData();
       }
     }
@@ -101,233 +117,256 @@ export default function Inventory() {
 
   const handleDelete = async (id: string) => {
     if (confirm("Are you sure you want to delete this item?")) {
-      const { error } = await supabase
-        .from("inventory_items")
-        .delete()
-        .eq("id", id);
+      const { error } = await supabase.from("inventory_items").delete().eq("id", id);
 
       if (error) {
         toast.error("Error deleting item");
       } else {
+        if (user?.id) {
+          await removeLocalImage(user.id, "inventory", id);
+        }
         toast.success("Item deleted successfully");
         fetchData();
       }
     }
   };
 
+  const dialog = (
+    <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+      <DialogTrigger asChild>
+        <Button
+          onClick={() => {
+            setEditingItem(null);
+            setPendingImage(null);
+          }}
+          disabled={categories.length === 0}
+          size="lg"
+          className="shadow-md"
+        >
+          <Plus className="mr-2 h-4 w-4" />
+          Add Item
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>{editingItem ? "Edit Item" : "Add New Item"}</DialogTitle>
+          <DialogDescription>
+            {editingItem ? "Update item details" : "Add a new product to your inventory"}
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={handleSubmit}>
+          <div className="space-y-4">
+            <ImageUploadField
+              type="inventory"
+              entityId={editingItem?.id}
+              fallback={images.productFallback}
+              onPendingFile={setPendingImage}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-4 mt-4">
+            <div className="space-y-2">
+              <Label htmlFor="category_id">Category</Label>
+              <Select name="category_id" defaultValue={editingItem?.category_id} required>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select category" />
+                </SelectTrigger>
+                <SelectContent>
+                  {categories.map((cat) => (
+                    <SelectItem key={cat.id} value={cat.id}>
+                      {cat.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="name">Product Name</Label>
+              <Input
+                id="name"
+                name="name"
+                placeholder="e.g., Super Basmati"
+                defaultValue={editingItem?.name}
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="purchase_price">Purchase Price (Rs.)</Label>
+              <Input
+                id="purchase_price"
+                name="purchase_price"
+                type="number"
+                step="0.01"
+                placeholder="0.00"
+                defaultValue={editingItem?.purchase_price}
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="selling_price">Selling Price (Rs.)</Label>
+              <Input
+                id="selling_price"
+                name="selling_price"
+                type="number"
+                step="0.01"
+                placeholder="0.00"
+                defaultValue={editingItem?.selling_price}
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="current_stock">Current Stock</Label>
+              <Input
+                id="current_stock"
+                name="current_stock"
+                type="number"
+                placeholder="0"
+                defaultValue={editingItem?.current_stock}
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="minimum_stock">Minimum Stock</Label>
+              <Input
+                id="minimum_stock"
+                name="minimum_stock"
+                type="number"
+                placeholder="10"
+                defaultValue={editingItem?.minimum_stock}
+                required
+              />
+            </div>
+            <div className="col-span-2 space-y-2">
+              <Label htmlFor="unit">Unit</Label>
+              <Input
+                id="unit"
+                name="unit"
+                placeholder="kg, liter, piece, etc."
+                defaultValue={editingItem?.unit || "kg"}
+                required
+              />
+            </div>
+          </div>
+          <DialogFooter className="mt-6">
+            <Button type="submit">{editingItem ? "Update" : "Add"} Item</Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+
   if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="text-center">
-          <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent mx-auto mb-4" />
-          <p className="text-muted-foreground">Loading inventory...</p>
-        </div>
-      </div>
-    );
+    return <PageLoader message="Loading inventory..." />;
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <div>
-          <h1 className="text-3xl font-bold">Inventory</h1>
-          <p className="text-muted-foreground">Manage your stock and products</p>
-        </div>
-        <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-          <DialogTrigger asChild>
-            <Button onClick={() => setEditingItem(null)} disabled={categories.length === 0}>
-              <Plus className="mr-2 h-4 w-4" />
-              Add Item
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="max-w-2xl">
-            <DialogHeader>
-              <DialogTitle>{editingItem ? "Edit Item" : "Add New Item"}</DialogTitle>
-              <DialogDescription>
-                {editingItem ? "Update item details" : "Add a new product to your inventory"}
-              </DialogDescription>
-            </DialogHeader>
-            <form onSubmit={handleSubmit}>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="category_id">Category</Label>
-                  <Select name="category_id" defaultValue={editingItem?.category_id} required>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select category" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {categories.map((cat) => (
-                        <SelectItem key={cat.id} value={cat.id}>
-                          {cat.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="name">Product Name</Label>
-                  <Input
-                    id="name"
-                    name="name"
-                    placeholder="e.g., Super Basmati"
-                    defaultValue={editingItem?.name}
-                    required
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="purchase_price">Purchase Price (Rs.)</Label>
-                  <Input
-                    id="purchase_price"
-                    name="purchase_price"
-                    type="number"
-                    step="0.01"
-                    placeholder="0.00"
-                    defaultValue={editingItem?.purchase_price}
-                    required
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="selling_price">Selling Price (Rs.)</Label>
-                  <Input
-                    id="selling_price"
-                    name="selling_price"
-                    type="number"
-                    step="0.01"
-                    placeholder="0.00"
-                    defaultValue={editingItem?.selling_price}
-                    required
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="current_stock">Current Stock</Label>
-                  <Input
-                    id="current_stock"
-                    name="current_stock"
-                    type="number"
-                    placeholder="0"
-                    defaultValue={editingItem?.current_stock}
-                    required
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="minimum_stock">Minimum Stock</Label>
-                  <Input
-                    id="minimum_stock"
-                    name="minimum_stock"
-                    type="number"
-                    placeholder="10"
-                    defaultValue={editingItem?.minimum_stock}
-                    required
-                  />
-                </div>
-                <div className="space-y-2 col-span-2">
-                  <Label htmlFor="unit">Unit</Label>
-                  <Input
-                    id="unit"
-                    name="unit"
-                    placeholder="kg, liter, piece, etc."
-                    defaultValue={editingItem?.unit || "kg"}
-                    required
-                  />
-                </div>
-              </div>
-              <DialogFooter className="mt-6">
-                <Button type="submit">
-                  {editingItem ? "Update" : "Add"} Item
-                </Button>
-              </DialogFooter>
-            </form>
-          </DialogContent>
-        </Dialog>
-      </div>
+    <div className="space-y-8">
+      <PageHeader
+        title="Inventory"
+        description="Track stock levels, prices, and low-stock alerts for every product."
+        action={dialog}
+      />
 
       {categories.length === 0 ? (
-        <Card>
-          <CardContent className="flex flex-col items-center justify-center py-12">
-            <Package className="h-12 w-12 text-muted-foreground mb-4" />
-            <p className="text-lg font-medium">No categories available</p>
-            <p className="text-sm text-muted-foreground mb-4">Please add categories first before adding inventory items</p>
-          </CardContent>
-        </Card>
+        <EmptyState
+          image={images.emptyCategories}
+          title="Add categories first"
+          description="Create product categories before adding inventory items."
+        />
       ) : items.length === 0 ? (
-        <Card>
-          <CardContent className="flex flex-col items-center justify-center py-12">
-            <Package className="h-12 w-12 text-muted-foreground mb-4" />
-            <p className="text-lg font-medium">No items yet</p>
-            <p className="text-sm text-muted-foreground mb-4">Start by adding your first inventory item</p>
-            <Button onClick={() => setDialogOpen(true)}>
+        <EmptyState
+          image={images.emptyInventory}
+          title="No items yet"
+          description="Add your first product to start tracking stock and sales."
+          action={
+            <EmptyStateButton onClick={() => setDialogOpen(true)}>
               <Plus className="mr-2 h-4 w-4" />
               Add Your First Item
-            </Button>
-          </CardContent>
-        </Card>
+            </EmptyStateButton>
+          }
+        />
       ) : (
-        <Card>
-          <CardHeader>
+        <Card className="overflow-hidden shadow-card">
+          <CardHeader className="border-b bg-muted/30">
             <CardTitle>All Items</CardTitle>
-            <CardDescription>Complete list of your inventory items</CardDescription>
+            <CardDescription>{items.length} products in stock</CardDescription>
           </CardHeader>
-          <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Category</TableHead>
-                  <TableHead>Stock</TableHead>
-                  <TableHead>Purchase Price</TableHead>
-                  <TableHead>Selling Price</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {items.map((item) => {
-                  const isLowStock = item.current_stock <= item.minimum_stock;
-                  return (
-                    <TableRow key={item.id}>
-                      <TableCell className="font-medium">{item.name}</TableCell>
-                      <TableCell>{item.categories?.name}</TableCell>
-                      <TableCell>
-                        {item.current_stock} {item.unit}
-                      </TableCell>
-                      <TableCell>Rs. {Number(item.purchase_price).toFixed(2)}</TableCell>
-                      <TableCell>Rs. {Number(item.selling_price).toFixed(2)}</TableCell>
-                      <TableCell>
-                        {isLowStock ? (
-                          <Badge variant="destructive" className="gap-1">
-                            <AlertTriangle className="h-3 w-3" />
-                            Low Stock
-                          </Badge>
-                        ) : (
-                          <Badge variant="secondary">In Stock</Badge>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex gap-2">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => {
-                              setEditingItem(item);
-                              setDialogOpen(true);
-                            }}
-                          >
-                            <Edit className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            variant="destructive"
-                            size="sm"
-                            onClick={() => handleDelete(item.id)}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
+          <CardContent className="p-0">
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead className="w-14" />
+                    <TableHead>Product</TableHead>
+                    <TableHead>Category</TableHead>
+                    <TableHead>Stock</TableHead>
+                    <TableHead>Cost</TableHead>
+                    <TableHead>Price</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {items.map((item) => {
+                    const isLowStock = item.current_stock <= item.minimum_stock;
+                    return (
+                      <TableRow key={item.id} className="group">
+                        <TableCell>
+                          <EntityImage
+                            type="inventory"
+                            entityId={item.id}
+                            fallback={getProductImage(item.name)}
+                            className="h-10 w-10 rounded-lg ring-2 ring-background transition-transform group-hover:scale-105"
+                          />
+                        </TableCell>
+                        <TableCell className="font-medium">{item.name}</TableCell>
+                        <TableCell className="text-muted-foreground">
+                          {item.categories?.name}
+                        </TableCell>
+                        <TableCell>
+                          {item.current_stock} {item.unit}
+                        </TableCell>
+                        <TableCell>{formatRs(Number(item.purchase_price))}</TableCell>
+                        <TableCell>{formatRs(Number(item.selling_price))}</TableCell>
+                        <TableCell>
+                          {isLowStock ? (
+                            <Badge variant="destructive" className="gap-1">
+                              <AlertTriangle className="h-3 w-3" />
+                              Low
+                            </Badge>
+                          ) : (
+                            <Badge className="bg-success/15 text-success hover:bg-success/20">
+                              In Stock
+                            </Badge>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                setEditingItem(item);
+                                setPendingImage(null);
+                                setDialogOpen(true);
+                              }}
+                            >
+                              <Edit className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="destructive"
+                              size="sm"
+                              onClick={() => handleDelete(item.id)}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
           </CardContent>
         </Card>
       )}

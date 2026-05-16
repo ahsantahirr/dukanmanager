@@ -3,15 +3,81 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { TrendingUp, DollarSign, Package, Calendar } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { TrendingUp, DollarSign, Package, Calendar, Download } from "lucide-react";
 import { format, subDays, startOfDay, endOfDay } from "date-fns";
+import { toast } from "sonner";
+import { PageHeader } from "@/components/PageHeader";
+import { PageLoader } from "@/components/PageLoader";
+import { StatCard } from "@/components/StatCard";
+import { DailySalesChart } from "@/components/DailySalesChart";
+import { formatRs } from "@/lib/format";
+import { images } from "@/lib/images";
+import {
+  generateReportPdf,
+  type DailyStat,
+  type ReportStats,
+  type SaleRow,
+} from "@/lib/generateReportPdf";
+
+function StatsGrid({
+  stats,
+  period,
+}: {
+  stats: ReportStats;
+  period: string;
+}) {
+  return (
+    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <StatCard
+        title="Total Sales"
+        value={formatRs(stats.totalSales || 0)}
+        subtitle={period}
+        icon={DollarSign}
+        variant="primary"
+      />
+      <StatCard
+        title="Total Profit"
+        value={formatRs(stats.totalProfit || 0)}
+        subtitle={period}
+        icon={TrendingUp}
+        variant="success"
+      />
+      <StatCard
+        title="Transactions"
+        value={stats.transactions || 0}
+        subtitle={period}
+        icon={Package}
+      />
+      <StatCard
+        title="Avg Per Day"
+        value={formatRs(stats.avgPerDay || 0)}
+        subtitle="Daily average"
+        icon={Calendar}
+      />
+    </div>
+  );
+}
 
 export default function Reports() {
   const { user } = useAuth();
   const [loading, setLoading] = useState(true);
-  const [dailyStats, setDailyStats] = useState<any[]>([]);
-  const [weeklyStats, setWeeklyStats] = useState<any>({});
-  const [monthlyStats, setMonthlyStats] = useState<any>({});
+  const [downloading, setDownloading] = useState(false);
+  const [businessName, setBusinessName] = useState<string>();
+  const [dailyStats, setDailyStats] = useState<DailyStat[]>([]);
+  const [weeklyStats, setWeeklyStats] = useState<ReportStats>({
+    totalSales: 0,
+    totalProfit: 0,
+    transactions: 0,
+    avgPerDay: 0,
+  });
+  const [monthlyStats, setMonthlyStats] = useState<ReportStats>({
+    totalSales: 0,
+    totalProfit: 0,
+    transactions: 0,
+    avgPerDay: 0,
+  });
+  const [recentSales, setRecentSales] = useState<SaleRow[]>([]);
 
   useEffect(() => {
     if (user) {
@@ -24,26 +90,32 @@ export default function Reports() {
     const last7Days = subDays(today, 7);
     const last30Days = subDays(today, 30);
 
-    // Fetch sales for different periods
-    const { data: allSales } = await supabase
-      .from("sales")
-      .select("*")
-      .eq("user_id", user?.id)
-      .gte("sale_date", last30Days.toISOString())
-      .order("sale_date", { ascending: false });
+    const [salesRes, profileRes] = await Promise.all([
+      supabase
+        .from("sales")
+        .select("*, inventory_items(name, unit, categories(name))")
+        .eq("user_id", user?.id)
+        .gte("sale_date", last30Days.toISOString())
+        .order("sale_date", { ascending: false }),
+      supabase.from("profiles").select("business_name").eq("id", user?.id).single(),
+    ]);
 
-    // Process daily stats (last 7 days)
-    const dailyData: any[] = [];
+    if (profileRes.data?.business_name) {
+      setBusinessName(profileRes.data.business_name);
+    }
+
+    const allSales = salesRes.data || [];
+
+    const dailyData: DailyStat[] = [];
     for (let i = 6; i >= 0; i--) {
       const date = subDays(today, i);
       const dayStart = startOfDay(date);
       const dayEnd = endOfDay(date);
 
-      const daySales = allSales?.filter(
+      const daySales = allSales.filter(
         (sale) =>
-          new Date(sale.sale_date) >= dayStart &&
-          new Date(sale.sale_date) <= dayEnd
-      ) || [];
+          new Date(sale.sale_date) >= dayStart && new Date(sale.sale_date) <= dayEnd
+      );
 
       dailyData.push({
         date: format(date, "MMM dd"),
@@ -53,180 +125,137 @@ export default function Reports() {
       });
     }
 
-    // Calculate weekly stats
-    const weekSales = allSales?.filter(
-      (sale) => new Date(sale.sale_date) >= last7Days
-    ) || [];
+    const weekSales = allSales.filter((sale) => new Date(sale.sale_date) >= last7Days);
 
-    const weekly = {
+    const weekly: ReportStats = {
       totalSales: weekSales.reduce((sum, sale) => sum + Number(sale.total_amount), 0),
       totalProfit: weekSales.reduce((sum, sale) => sum + Number(sale.profit), 0),
       transactions: weekSales.length,
       avgPerDay: weekSales.reduce((sum, sale) => sum + Number(sale.total_amount), 0) / 7,
     };
 
-    // Calculate monthly stats
-    const monthly = {
-      totalSales: allSales?.reduce((sum, sale) => sum + Number(sale.total_amount), 0) || 0,
-      totalProfit: allSales?.reduce((sum, sale) => sum + Number(sale.profit), 0) || 0,
-      transactions: allSales?.length || 0,
-      avgPerDay: (allSales?.reduce((sum, sale) => sum + Number(sale.total_amount), 0) || 0) / 30,
+    const monthly: ReportStats = {
+      totalSales: allSales.reduce((sum, sale) => sum + Number(sale.total_amount), 0),
+      totalProfit: allSales.reduce((sum, sale) => sum + Number(sale.profit), 0),
+      transactions: allSales.length,
+      avgPerDay:
+        allSales.reduce((sum, sale) => sum + Number(sale.total_amount), 0) / 30,
     };
+
+    const salesForPdf: SaleRow[] = allSales.slice(0, 50).map((sale) => ({
+      date: format(new Date(sale.sale_date), "MMM dd, HH:mm"),
+      item: sale.inventory_items?.name || "—",
+      category: sale.inventory_items?.categories?.name || "—",
+      quantity: `${Number(sale.quantity).toFixed(2)} ${sale.inventory_items?.unit || ""}`.trim(),
+      total: Number(sale.total_amount),
+      profit: Number(sale.profit),
+    }));
 
     setDailyStats(dailyData);
     setWeeklyStats(weekly);
     setMonthlyStats(monthly);
+    setRecentSales(salesForPdf);
     setLoading(false);
   };
 
+  const handleDownloadPdf = () => {
+    if ((weeklyStats.transactions || 0) === 0) {
+      toast.error("No sales data to export. Record some sales first.");
+      return;
+    }
+
+    setDownloading(true);
+    try {
+      generateReportPdf({
+        businessName,
+        weekly: weeklyStats,
+        monthly: monthlyStats,
+        daily: dailyStats,
+        recentSales,
+      });
+      toast.success("Report downloaded as PDF");
+    } catch {
+      toast.error("Failed to generate PDF. Please try again.");
+    } finally {
+      setDownloading(false);
+    }
+  };
+
   if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="text-center">
-          <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent mx-auto mb-4" />
-          <p className="text-muted-foreground">Loading reports...</p>
-        </div>
-      </div>
-    );
+    return <PageLoader message="Loading reports..." />;
   }
 
+  const hasData = (weeklyStats.transactions || 0) > 0;
+
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold">Reports & Analytics</h1>
-        <p className="text-muted-foreground">Track your sales performance and trends</p>
+    <div className="space-y-8">
+      <PageHeader
+        title="Reports & Analytics"
+        description="Understand sales trends, profit, and daily performance."
+        action={
+          <Button
+            size="lg"
+            className="shadow-md"
+            onClick={handleDownloadPdf}
+            disabled={downloading || !hasData}
+          >
+            <Download className="mr-2 h-4 w-4" />
+            {downloading ? "Generating..." : "Download PDF"}
+          </Button>
+        }
+      />
+
+      <div className="relative overflow-hidden rounded-2xl shadow-card">
+        <img
+          src={images.emptyReports}
+          alt=""
+          className="absolute inset-0 h-full w-full object-cover opacity-40"
+        />
+        <div className="relative bg-gradient-to-r from-primary/90 to-accent/80 p-6 text-white sm:p-8">
+          <p className="text-sm font-medium text-white/80">Performance snapshot</p>
+          <p className="mt-1 text-2xl font-bold sm:text-3xl">
+            {hasData
+              ? `${weeklyStats.transactions} sales this week`
+              : "Record sales to see analytics"}
+          </p>
+          {hasData && (
+            <p className="mt-2 text-white/90">
+              Weekly revenue: {formatRs(weeklyStats.totalSales || 0)} · Profit:{" "}
+              {formatRs(weeklyStats.totalProfit || 0)}
+            </p>
+          )}
+        </div>
       </div>
 
-      <Tabs defaultValue="weekly" className="space-y-4">
-        <TabsList>
+      <Tabs defaultValue="weekly" className="space-y-6">
+        <TabsList className="grid h-11 w-full max-w-md grid-cols-3">
           <TabsTrigger value="weekly">Weekly</TabsTrigger>
           <TabsTrigger value="monthly">Monthly</TabsTrigger>
-          <TabsTrigger value="daily">Daily Breakdown</TabsTrigger>
+          <TabsTrigger value="daily">Daily</TabsTrigger>
         </TabsList>
 
         <TabsContent value="weekly" className="space-y-4">
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Total Sales</CardTitle>
-                <DollarSign className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">Rs. {weeklyStats.totalSales?.toFixed(2)}</div>
-                <p className="text-xs text-muted-foreground">Last 7 days</p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Total Profit</CardTitle>
-                <TrendingUp className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold text-success">
-                  Rs. {weeklyStats.totalProfit?.toFixed(2)}
-                </div>
-                <p className="text-xs text-muted-foreground">Last 7 days</p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Transactions</CardTitle>
-                <Package className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{weeklyStats.transactions}</div>
-                <p className="text-xs text-muted-foreground">Last 7 days</p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Avg Per Day</CardTitle>
-                <Calendar className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">Rs. {weeklyStats.avgPerDay?.toFixed(2)}</div>
-                <p className="text-xs text-muted-foreground">Daily average</p>
-              </CardContent>
-            </Card>
-          </div>
+          <StatsGrid stats={weeklyStats} period="Last 7 days" />
         </TabsContent>
 
         <TabsContent value="monthly" className="space-y-4">
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Total Sales</CardTitle>
-                <DollarSign className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">Rs. {monthlyStats.totalSales?.toFixed(2)}</div>
-                <p className="text-xs text-muted-foreground">Last 30 days</p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Total Profit</CardTitle>
-                <TrendingUp className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold text-success">
-                  Rs. {monthlyStats.totalProfit?.toFixed(2)}
-                </div>
-                <p className="text-xs text-muted-foreground">Last 30 days</p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Transactions</CardTitle>
-                <Package className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{monthlyStats.transactions}</div>
-                <p className="text-xs text-muted-foreground">Last 30 days</p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Avg Per Day</CardTitle>
-                <Calendar className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">Rs. {monthlyStats.avgPerDay?.toFixed(2)}</div>
-                <p className="text-xs text-muted-foreground">Daily average</p>
-              </CardContent>
-            </Card>
-          </div>
+          <StatsGrid stats={monthlyStats} period="Last 30 days" />
         </TabsContent>
 
         <TabsContent value="daily" className="space-y-4">
-          <Card>
+          <Card className="shadow-card">
             <CardHeader>
               <CardTitle>Daily Sales Trend</CardTitle>
-              <CardDescription>Sales performance over the last 7 days</CardDescription>
+              <CardDescription>Revenue over the last 7 days</CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="space-y-4">
-                {dailyStats.map((day, index) => (
-                  <div key={index} className="flex items-center justify-between border-b pb-3">
-                    <div>
-                      <p className="font-medium">{day.date}</p>
-                      <p className="text-sm text-muted-foreground">
-                        {day.transactions} transaction{day.transactions !== 1 ? "s" : ""}
-                      </p>
-                    </div>
-                    <div className="text-right">
-                      <p className="font-bold">Rs. {day.sales.toFixed(2)}</p>
-                      <p className="text-sm text-success">Profit: Rs. {day.profit.toFixed(2)}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
+              {!hasData ? (
+                <p className="py-8 text-center text-muted-foreground">
+                  No sales data yet — record a sale to see trends.
+                </p>
+              ) : (
+                <DailySalesChart data={dailyStats} />
+              )}
             </CardContent>
           </Card>
         </TabsContent>

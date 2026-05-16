@@ -9,6 +9,13 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import { Plus, Edit, Trash2, FolderOpen } from "lucide-react";
+import { PageHeader } from "@/components/PageHeader";
+import { PageLoader } from "@/components/PageLoader";
+import { EmptyState, EmptyStateButton } from "@/components/EmptyState";
+import { images, getCategoryFallback } from "@/lib/images";
+import { EntityImage } from "@/components/EntityImage";
+import { ImageUploadField } from "@/components/ImageUploadField";
+import { removeLocalImage, saveLocalImage } from "@/lib/localImages";
 
 export default function Categories() {
   const { user } = useAuth();
@@ -16,6 +23,7 @@ export default function Categories() {
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingCategory, setEditingCategory] = useState<any>(null);
+  const [pendingImage, setPendingImage] = useState<File | null>(null);
 
   useEffect(() => {
     if (user) {
@@ -56,18 +64,25 @@ export default function Categories() {
         toast.success("Category updated successfully");
         setDialogOpen(false);
         setEditingCategory(null);
+        setPendingImage(null);
         fetchCategories();
       }
     } else {
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from("categories")
-        .insert({ name, description, user_id: user?.id });
+        .insert({ name, description, user_id: user?.id })
+        .select()
+        .single();
 
       if (error) {
         toast.error(error.message);
       } else {
+        if (data && pendingImage && user?.id) {
+          await saveLocalImage(user.id, "category", data.id, pendingImage);
+        }
         toast.success("Category added successfully");
         setDialogOpen(false);
+        setPendingImage(null);
         fetchCategories();
       }
     }
@@ -83,100 +98,121 @@ export default function Categories() {
       if (error) {
         toast.error("Error deleting category");
       } else {
+        if (user?.id) {
+          await removeLocalImage(user.id, "category", id);
+        }
         toast.success("Category deleted successfully");
         fetchCategories();
       }
     }
   };
 
+  const openAdd = () => {
+    setEditingCategory(null);
+    setPendingImage(null);
+    setDialogOpen(true);
+  };
+
   if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="text-center">
-          <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent mx-auto mb-4" />
-          <p className="text-muted-foreground">Loading categories...</p>
-        </div>
-      </div>
-    );
+    return <PageLoader message="Loading categories..." />;
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <div>
-          <h1 className="text-3xl font-bold">Categories</h1>
-          <p className="text-muted-foreground">Manage your product categories</p>
-        </div>
-        <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-          <DialogTrigger asChild>
-            <Button onClick={() => setEditingCategory(null)}>
-              <Plus className="mr-2 h-4 w-4" />
-              Add Category
-            </Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>{editingCategory ? "Edit Category" : "Add New Category"}</DialogTitle>
-              <DialogDescription>
-                {editingCategory ? "Update category details" : "Create a new product category"}
-              </DialogDescription>
-            </DialogHeader>
-            <form onSubmit={handleSubmit}>
-              <div className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="name">Category Name</Label>
-                  <Input
-                    id="name"
-                    name="name"
-                    placeholder="e.g., Basmati Rice"
-                    defaultValue={editingCategory?.name}
-                    required
+    <div className="space-y-8">
+      <PageHeader
+        title="Categories"
+        description="Organize products into groups — rice, grocery, cosmetics, and more."
+        action={
+          <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+            <DialogTrigger asChild>
+              <Button onClick={() => setEditingCategory(null)} size="lg" className="shadow-md">
+                <Plus className="mr-2 h-4 w-4" />
+                Add Category
+              </Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>{editingCategory ? "Edit Category" : "Add New Category"}</DialogTitle>
+                <DialogDescription>
+                  {editingCategory ? "Update category details" : "Create a new product category"}
+                </DialogDescription>
+              </DialogHeader>
+              <form onSubmit={handleSubmit}>
+                <div className="space-y-4">
+                  <ImageUploadField
+                    type="category"
+                    entityId={editingCategory?.id}
+                    fallback={images.emptyCategories}
+                    onPendingFile={setPendingImage}
                   />
+                  <div className="space-y-2">
+                    <Label htmlFor="name">Category Name</Label>
+                    <Input
+                      id="name"
+                      name="name"
+                      placeholder="e.g., Basmati Rice"
+                      defaultValue={editingCategory?.name}
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="description">Description (Optional)</Label>
+                    <Textarea
+                      id="description"
+                      name="description"
+                      placeholder="Brief description of this category"
+                      defaultValue={editingCategory?.description}
+                      rows={3}
+                    />
+                  </div>
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="description">Description (Optional)</Label>
-                  <Textarea
-                    id="description"
-                    name="description"
-                    placeholder="Brief description of this category"
-                    defaultValue={editingCategory?.description}
-                    rows={3}
-                  />
-                </div>
-              </div>
-              <DialogFooter className="mt-6">
-                <Button type="submit">
-                  {editingCategory ? "Update" : "Add"} Category
-                </Button>
-              </DialogFooter>
-            </form>
-          </DialogContent>
-        </Dialog>
-      </div>
+                <DialogFooter className="mt-6">
+                  <Button type="submit">
+                    {editingCategory ? "Update" : "Add"} Category
+                  </Button>
+                </DialogFooter>
+              </form>
+            </DialogContent>
+          </Dialog>
+        }
+      />
 
       {categories.length === 0 ? (
-        <Card>
-          <CardContent className="flex flex-col items-center justify-center py-12">
-            <FolderOpen className="h-12 w-12 text-muted-foreground mb-4" />
-            <p className="text-lg font-medium">No categories yet</p>
-            <p className="text-sm text-muted-foreground mb-4">Start by adding your first product category</p>
-            <Button onClick={() => setDialogOpen(true)}>
+        <EmptyState
+          image={images.emptyCategories}
+          title="No categories yet"
+          description="Categories help you organize inventory — start with rice, grocery, or cosmetics."
+          action={
+            <EmptyStateButton onClick={openAdd}>
               <Plus className="mr-2 h-4 w-4" />
               Add Your First Category
-            </Button>
-          </CardContent>
-        </Card>
+            </EmptyStateButton>
+          }
+        />
       ) : (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {categories.map((category) => (
-            <Card key={category.id}>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <FolderOpen className="h-5 w-5 text-primary" />
-                  {category.name}
-                </CardTitle>
-                {category.description && (
-                  <CardDescription>{category.description}</CardDescription>
+        <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+          {categories.map((category, index) => (
+            <Card key={category.id} className="group overflow-hidden shadow-card transition-all hover:shadow-soft">
+              <div className="relative h-36 overflow-hidden">
+                <EntityImage
+                  type="category"
+                  entityId={category.id}
+                  fallback={getCategoryFallback(index)}
+                  className="h-full w-full transition-transform duration-300 group-hover:scale-105"
+                />
+                <div className="image-overlay" />
+                <div className="absolute bottom-3 left-3 right-3">
+                  <CardTitle className="flex items-center gap-2 text-lg text-white drop-shadow">
+                    <FolderOpen className="h-5 w-5" />
+                    {category.name}
+                  </CardTitle>
+                </div>
+              </div>
+              <CardHeader className="pb-2 pt-4">
+                {category.description ? (
+                  <CardDescription className="line-clamp-2">{category.description}</CardDescription>
+                ) : (
+                  <CardDescription className="italic">No description</CardDescription>
                 )}
               </CardHeader>
               <CardContent>
@@ -184,12 +220,14 @@ export default function Categories() {
                   <Button
                     variant="outline"
                     size="sm"
+                    className="flex-1"
                     onClick={() => {
                       setEditingCategory(category);
+                      setPendingImage(null);
                       setDialogOpen(true);
                     }}
                   >
-                    <Edit className="h-4 w-4 mr-1" />
+                    <Edit className="mr-1 h-4 w-4" />
                     Edit
                   </Button>
                   <Button
@@ -197,8 +235,7 @@ export default function Categories() {
                     size="sm"
                     onClick={() => handleDelete(category.id)}
                   >
-                    <Trash2 className="h-4 w-4 mr-1" />
-                    Delete
+                    <Trash2 className="h-4 w-4" />
                   </Button>
                 </div>
               </CardContent>

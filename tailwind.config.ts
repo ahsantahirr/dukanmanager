@@ -13,6 +13,13 @@ export default {
       },
     },
     extend: {
+      fontFamily: {
+        sans: ['"Plus Jakarta Sans"', "system-ui", "sans-serif"],
+      },
+      boxShadow: {
+        soft: "0 4px 24px -4px hsl(var(--primary) / 0.12)",
+        card: "0 1px 3px hsl(215 25% 15% / 0.06), 0 8px 24px -8px hsl(215 25% 15% / 0.08)",
+      },
       colors: {
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",

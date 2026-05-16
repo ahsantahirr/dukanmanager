@@ -1,9 +1,24 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Package, TrendingUp, DollarSign, AlertTriangle, TrendingDown } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { PageLoader } from "@/components/PageLoader";
+import { StatCard } from "@/components/StatCard";
+import { formatRs } from "@/lib/format";
+import { images } from "@/lib/images";
+import { getProductImage } from "@/lib/images";
+import { EntityImage } from "@/components/EntityImage";
+import {
+  Package,
+  TrendingUp,
+  DollarSign,
+  AlertTriangle,
+  ShoppingCart,
+  ArrowRight,
+} from "lucide-react";
 
 export default function Dashboard() {
   const { user } = useAuth();
@@ -28,45 +43,41 @@ export default function Dashboard() {
   const fetchDashboardData = async () => {
     setLoading(true);
 
-    // Fetch categories count
     const { count: categoriesCount } = await supabase
       .from("categories")
       .select("*", { count: "exact", head: true })
       .eq("user_id", user?.id);
 
-    // Fetch inventory items
     const { data: inventoryData, count: itemsCount } = await supabase
       .from("inventory_items")
       .select("*, categories(name)", { count: "exact" })
       .eq("user_id", user?.id);
 
-    // Calculate low stock items
-    const lowStock = inventoryData?.filter(
-      (item) => item.current_stock <= item.minimum_stock
-    ) || [];
+    const lowStock =
+      inventoryData?.filter((item) => item.current_stock <= item.minimum_stock) || [];
 
-    // Fetch today's sales
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    
+
     const { data: todaySalesData } = await supabase
       .from("sales")
       .select("*")
       .eq("user_id", user?.id)
       .gte("sale_date", today.toISOString());
 
-    const todaySalesTotal = todaySalesData?.reduce((sum, sale) => sum + Number(sale.total_amount), 0) || 0;
-    const todayProfitTotal = todaySalesData?.reduce((sum, sale) => sum + Number(sale.profit), 0) || 0;
+    const todaySalesTotal =
+      todaySalesData?.reduce((sum, sale) => sum + Number(sale.total_amount), 0) || 0;
+    const todayProfitTotal =
+      todaySalesData?.reduce((sum, sale) => sum + Number(sale.profit), 0) || 0;
 
-    // Fetch all-time revenue
     const { data: allSales } = await supabase
       .from("sales")
       .select("total_amount")
       .eq("user_id", user?.id);
 
-    const totalRevenue = allSales?.reduce((sum, sale) => sum + Number(sale.total_amount), 0) || 0;
+    const totalRevenue =
+      allSales?.reduce((sum, sale) => sum + Number(sale.total_amount), 0) || 0;
 
-    // Get fast-selling items (last 7 days)
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
@@ -76,7 +87,6 @@ export default function Dashboard() {
       .eq("user_id", user?.id)
       .gte("sale_date", sevenDaysAgo.toISOString());
 
-    // Aggregate sales by item
     const salesByItem = recentSales?.reduce((acc: any, sale: any) => {
       const itemId = sale.inventory_item_id;
       if (!acc[itemId]) {
@@ -110,135 +120,150 @@ export default function Dashboard() {
   };
 
   if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="text-center">
-          <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent mx-auto mb-4" />
-          <p className="text-muted-foreground">Loading dashboard...</p>
-        </div>
-      </div>
-    );
+    return <PageLoader message="Loading dashboard..." />;
   }
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold">Dashboard</h1>
-        <p className="text-muted-foreground">Overview of your inventory and sales</p>
+    <div className="space-y-8">
+      {/* Welcome banner */}
+      <div className="relative overflow-hidden rounded-2xl shadow-card">
+        <img
+          src={images.dashboardBanner}
+          alt=""
+          className="absolute inset-0 h-full w-full object-cover"
+        />
+        <div className="image-overlay" />
+        <div className="relative flex flex-col gap-4 p-6 text-white sm:flex-row sm:items-center sm:justify-between sm:p-8">
+          <div>
+            <Badge className="mb-3 bg-white/20 text-white hover:bg-white/25">Dashboard</Badge>
+            <h1 className="text-2xl font-bold sm:text-3xl">Welcome to your dukan</h1>
+            <p className="mt-1 max-w-md text-white/80">
+              {stats.totalRevenue > 0
+                ? `All-time revenue: ${formatRs(stats.totalRevenue)}`
+                : "Add categories and stock to get started"}
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button asChild variant="secondary" className="shadow-md">
+              <Link to="/sales">
+                <ShoppingCart className="mr-2 h-4 w-4" />
+                Record Sale
+              </Link>
+            </Button>
+            <Button asChild variant="outline" className="border-white/30 bg-white/10 text-white hover:bg-white/20 hover:text-white">
+              <Link to="/inventory">
+                Manage Stock
+                <ArrowRight className="ml-2 h-4 w-4" />
+              </Link>
+            </Button>
+          </div>
+        </div>
       </div>
 
-      {/* Stats Cards */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Categories</CardTitle>
-            <Package className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{stats.totalCategories}</div>
-            <p className="text-xs text-muted-foreground">Product categories</p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Items</CardTitle>
-            <Package className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{stats.totalItems}</div>
-            <p className="text-xs text-muted-foreground">In inventory</p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Today's Sales</CardTitle>
-            <DollarSign className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">Rs. {stats.todaySales.toFixed(2)}</div>
-            <p className="text-xs text-success">Profit: Rs. {stats.todayProfit.toFixed(2)}</p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Low Stock</CardTitle>
-            <AlertTriangle className="h-4 w-4 text-warning" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-warning">{stats.lowStockItems}</div>
-            <p className="text-xs text-muted-foreground">Items need restocking</p>
-          </CardContent>
-        </Card>
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <StatCard
+          title="Categories"
+          value={stats.totalCategories}
+          subtitle="Product groups"
+          icon={Package}
+          variant="primary"
+        />
+        <StatCard
+          title="Total Items"
+          value={stats.totalItems}
+          subtitle="In inventory"
+          icon={Package}
+        />
+        <StatCard
+          title="Today's Sales"
+          value={formatRs(stats.todaySales)}
+          subtitle={`Profit: ${formatRs(stats.todayProfit)}`}
+          icon={DollarSign}
+          variant="success"
+        />
+        <StatCard
+          title="Low Stock"
+          value={stats.lowStockItems}
+          subtitle="Need restocking"
+          icon={AlertTriangle}
+          variant="warning"
+        />
       </div>
 
-      {/* Alerts and Insights */}
-      <div className="grid gap-4 md:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
+      <div className="grid gap-6 lg:grid-cols-2">
+        <Card className="overflow-hidden shadow-card">
+          <CardHeader className="border-b bg-warning/5">
+            <CardTitle className="flex items-center gap-2 text-lg">
               <AlertTriangle className="h-5 w-5 text-warning" />
               Low Stock Alerts
             </CardTitle>
-            <CardDescription>Items running low on stock</CardDescription>
+            <CardDescription>Items running low — restock soon</CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="p-0">
             {lowStockAlerts.length === 0 ? (
-              <p className="text-sm text-muted-foreground">All items are well stocked!</p>
+              <p className="p-6 text-sm text-muted-foreground">All items are well stocked!</p>
             ) : (
-              <div className="space-y-3">
+              <ul className="divide-y">
                 {lowStockAlerts.map((item) => (
-                  <Alert key={item.id} variant="destructive">
-                    <AlertDescription>
-                      <div className="flex justify-between items-center">
-                        <div>
-                          <p className="font-medium">{item.name}</p>
-                          <p className="text-xs">{item.categories?.name}</p>
-                        </div>
-                        <div className="text-right">
-                          <p className="font-bold">{item.current_stock} {item.unit}</p>
-                          <p className="text-xs">Min: {item.minimum_stock}</p>
-                        </div>
-                      </div>
-                    </AlertDescription>
-                  </Alert>
+                  <li key={item.id} className="flex items-center gap-4 p-4 transition-colors hover:bg-muted/40">
+                    <EntityImage
+                      type="inventory"
+                      entityId={item.id}
+                      fallback={getProductImage(item.name)}
+                      className="h-12 w-12 rounded-lg ring-2 ring-background"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <p className="font-medium">{item.name}</p>
+                      <p className="text-xs text-muted-foreground">{item.categories?.name}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="font-bold text-warning">
+                        {item.current_stock} {item.unit}
+                      </p>
+                      <p className="text-xs text-muted-foreground">Min: {item.minimum_stock}</p>
+                    </div>
+                  </li>
                 ))}
-              </div>
+              </ul>
             )}
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
+        <Card className="overflow-hidden shadow-card">
+          <CardHeader className="border-b bg-success/5">
+            <CardTitle className="flex items-center gap-2 text-lg">
               <TrendingUp className="h-5 w-5 text-success" />
               Fast Selling Items
             </CardTitle>
-            <CardDescription>Top performers (Last 7 days)</CardDescription>
+            <CardDescription>Top performers — last 7 days</CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="p-0">
             {fastSellingItems.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No sales data yet</p>
+              <p className="p-6 text-sm text-muted-foreground">No sales data yet</p>
             ) : (
-              <div className="space-y-3">
+              <ul className="divide-y">
                 {fastSellingItems.map((item: any, index) => (
-                  <div key={item.id} className="flex items-center justify-between border-b pb-2">
-                    <div className="flex items-center gap-2">
-                      <span className="font-bold text-primary">#{index + 1}</span>
-                      <div>
-                        <p className="font-medium text-sm">{item.name}</p>
-                        <p className="text-xs text-muted-foreground">{item.category}</p>
-                      </div>
+                  <li key={item.id} className="flex items-center gap-4 p-4 transition-colors hover:bg-muted/40">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-primary/10 text-lg font-bold text-primary">
+                      #{index + 1}
+                    </div>
+                    <EntityImage
+                      type="inventory"
+                      entityId={item.id}
+                      fallback={getProductImage(item.name || "")}
+                      className="h-12 w-12 rounded-lg ring-2 ring-background"
+                    />
+                    <div className="min-w-0 flex-1">
+                      <p className="font-medium">{item.name}</p>
+                      <p className="text-xs text-muted-foreground">{item.category}</p>
                     </div>
                     <div className="text-right">
                       <p className="font-bold text-success">{item.totalQuantity.toFixed(2)}</p>
                       <p className="text-xs text-muted-foreground">units sold</p>
                     </div>
-                  </div>
+                  </li>
                 ))}
-              </div>
+              </ul>
             )}
           </CardContent>
         </Card>
